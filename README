@@ -1,0 +1,16 @@
+Overload LAN proxy
+
+Run Overload LAN games over the internet.
+
+Overload is a registered trademark of Revival Productions, LLC.
+This is an unaffiliated, unsupported tool. Use at your own risk.
+
+How to use
+
+Start the application on the clients and the server. Make sure UDP ports 7000-8001 are open/forwarded on the server.
+
+Create/Join a LAN match in the game and use the server ip/hostname as password.
+
+Run on Linux:
+
+dotnet run -f netcoreapp2.2
