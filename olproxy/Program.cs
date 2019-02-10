@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -23,9 +24,13 @@ namespace olproxy
         private const int broadcastPort = 8000;
         private IPEndPoint[] BroadcastEndpoints;
         private HashSet<IPAddress> LocalIPSet;
+        private IPAddress FirstLocalIP;
+        private Dictionary<BroadcastPeerId, int> fakePids;
 
+        #if NETCORE
         [DllImport("libc", SetLastError = true)]
         private unsafe static extern int setsockopt(int socket, int level, int option_name, void* option_value, uint option_len);
+        #endif
 
         void AddMessage(string s)
         {
@@ -37,6 +42,8 @@ namespace olproxy
         {
             LocalIPSet = new HashSet<IPAddress>();
             List<IPEndPoint> eps = new List<IPEndPoint>();
+            FirstLocalIP = null;
+            fakePids = new Dictionary<BroadcastPeerId, int>();
             foreach (NetworkInterface intf in NetworkInterface.GetAllNetworkInterfaces())
             {
                 bool loopback = intf.NetworkInterfaceType == NetworkInterfaceType.Loopback;
@@ -45,6 +52,8 @@ namespace olproxy
                     if (addr.Address.AddressFamily != AddressFamily.InterNetwork)
                         continue;
                     LocalIPSet.Add(addr.Address);
+                    if (FirstLocalIP == null)
+                        FirstLocalIP = addr.Address;
                     if (!loopback)
                     {
                         uint ipAddress = BitConverter.ToUInt32(addr.Address.GetAddressBytes(), 0);
@@ -77,6 +86,7 @@ namespace olproxy
             //socket.Client.ExclusiveAddressUse = false;
             //socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ExclusiveAddressUse, 0);
             localSocket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, 1);
+            #if NETCORE
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) {
                 unsafe {
                     // set SO_REUSEADDR (https://github.com/dotnet/corefx/issues/32027)
@@ -84,6 +94,7 @@ namespace olproxy
                     setsockopt(localSocket.Client.Handle.ToInt32(), 1, 2, &value, sizeof(int));
                 }
             }
+            #endif
             //socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, 1);
             localSocket.Client.Bind(new IPEndPoint(IPAddress.Any, broadcastPort));
             //socket.BeginReceive(new AsyncCallback(OnUdpData), this);
@@ -97,8 +108,11 @@ namespace olproxy
                 var now = DateTime.UtcNow;
                 if (idx == 0) { // local
                     var result = taskLocal.Result;
+                    var pktPid = BroadcastHandler.GetPacketPID(result.Buffer);
+                    if (LocalIPSet.Contains(result.RemoteEndPoint.Address)) // treat all local ips as same
+                        result.RemoteEndPoint.Address = FirstLocalIP;
                     if (!LocalIPSet.Contains(result.RemoteEndPoint.Address) ||
-                        BroadcastHandler.GetPacketPID(result.Buffer) != myPid)
+                        !bcast.activeFakePids.Contains(pktPid))
                     {
                         var message = bcast.HandlePacket(result.RemoteEndPoint, result.Buffer);
                         if (message != null) {
@@ -121,7 +135,11 @@ namespace olproxy
                                 }
                             }
                             if (rem != null)
-                                bcast.SendMulti(message, remoteSocket.Client, rem);
+                            {
+                                if (message != "")
+                                    AddMessage("Sending to remote " + String.Join(", ", rem.Select(x => x.ToString())));
+                                bcast.SendMulti(message, remoteSocket.Client, rem, pktPid);
+                            }
                         }
                     }
                     taskLocal = localSocket.ReceiveAsync();
@@ -133,11 +151,17 @@ namespace olproxy
                         var message = bcast.HandlePacket(result.RemoteEndPoint, result.Buffer);
                         if (message != null)
                         {
+                            var pktPid = BroadcastHandler.GetPacketPID(result.Buffer);
+                            var bid = new BroadcastPeerId() { source = result.RemoteEndPoint, pid = pktPid };
+                            var pid = bcast.peers[bid].fakePid;
+
                             // change advertized ip to ip we've received this from
                             message = new Regex("(\"internalIP\":[{]\"S\":\")([^\"]+)(\"[}])").Replace(message,
                                 "${1}" + result.RemoteEndPoint.Address + "$3");
-                            Debug.WriteLine("Sending " + message);
-                            bcast.SendMulti(message, localSocket.Client, BroadcastEndpoints);
+                            //Debug.WriteLine("Sending " + message);
+                            if (message != "")
+                                AddMessage("Sending to local " + String.Join(", ", BroadcastEndpoints.Select(x => x.ToString())) + " pid " + pid);
+                            bcast.SendMulti(message, localSocket.Client, BroadcastEndpoints, pid);
                         }
                     }
                     taskRemote = remoteSocket.ReceiveAsync();

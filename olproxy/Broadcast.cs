@@ -9,16 +9,12 @@ using System.Diagnostics;
 
 namespace olproxy
 {
-    class Peer
-    {
-        string lastMessage;
-        DateTime lastMessageTime;
-    }
-
     class BroadcastPeer
     {
         public int lastSeq;
         public byte[][] curParts;
+        public DateTime lastTime;
+        public int fakePid;
     }
 
     class BroadcastPeerId
@@ -48,7 +44,8 @@ namespace olproxy
         public const int defaultRemotePort = 8001;
 
         UdpClient socket;
-        Dictionary<BroadcastPeerId, BroadcastPeer> peers = new Dictionary<BroadcastPeerId, BroadcastPeer>();
+        public Dictionary<BroadcastPeerId, BroadcastPeer> peers = new Dictionary<BroadcastPeerId, BroadcastPeer>();
+        public HashSet<int> activeFakePids = new HashSet<int>();
         Guid uid = Guid.NewGuid();
         int myPid = System.Diagnostics.Process.GetCurrentProcess().Id;
 
@@ -75,17 +72,36 @@ namespace olproxy
             BroadcastPeerId peerId = new BroadcastPeerId() { source = source, pid = ppid };
             if (totalSize == 0 && partCount == 0 && partIdx == 0)
             {
-                if (peers.Remove(peerId))
-                    AddMessage("Disconnect from " + source + ":" + ppid);
-                return "";
+                if (peers.ContainsKey(peerId))
+                {
+                    if (peers[peerId].lastSeq != -1)
+                        AddMessage("Disconnect from " + source + ":" + ppid);
+                    peers[peerId].lastSeq = -1;
+                    // do not remove to keep fakePid around...
+                    return "";
+                }
+                return null;
             }
 
-            if (!peers.TryGetValue(peerId, out BroadcastPeer peer))
+            var now = DateTime.UtcNow;
+            var timeout = now.AddSeconds(-20);
+            if (!peers.TryGetValue(peerId, out BroadcastPeer peer) || peer.lastTime.CompareTo(timeout) < 0)
             {
-                AddMessage("New client " + source + ":" + ppid);
-                peers.Add(peerId, peer = new BroadcastPeer() { lastSeq = -1 });
+                // remove timed out peers
+                foreach (var x in peers.Keys.Where(x => peers[x].lastTime.CompareTo(timeout) < 0).ToList())
+                {
+                    activeFakePids.Remove(peers[x].fakePid);
+                    peers.Remove(x);
+                }
+                var pid = -2000000000;
+                while (activeFakePids.Contains(pid))
+                    pid++;
+                activeFakePids.Add(pid);
+                AddMessage("New client " + source + ":" + ppid + " fakepid " + pid);
+                peers.Add(peerId, peer = new BroadcastPeer() { lastSeq = -1, fakePid = pid });
             }
             //AddMessage("Got " + message.Length + " bytes from " + source + ":" + pid + " " + seq + " (" + c.lastSeq + ") tot " + totalSize + " " + partIdx + "/" + partCount);
+            peer.lastTime = now;
             if (seq > peer.lastSeq)
             {
                 peer.curParts = new byte[partCount][];
@@ -117,14 +133,18 @@ namespace olproxy
             return null;
         }
 
-        int mySeq = -1;
-        List<byte[]> MessageToPackets(string msg)
+        Dictionary<int, int> pidSeq = new Dictionary<int, int>();
+        List<byte[]> MessageToPackets(string msg, int pid = -1)
         {
             bool closePacket = msg.Length == 0;
             byte[] buf = Encoding.UTF8.GetBytes(msg);
             int maxPacketSize = 384;
             int packetCount = closePacket ? 1 : (buf.Length + maxPacketSize - 1) / maxPacketSize;
-            mySeq++;
+            if (pid == -1)
+                pid = myPid;
+            if (!pidSeq.TryGetValue(pid, out int seq))
+                seq = -1;
+            pidSeq[pid] = ++seq;
             uint hash = closePacket ? 0 : xxHash.CalculateHash(buf);
             var packets = new List<byte[]>();
             for (int packetIdx = 0; packetIdx < packetCount; packetIdx++)
@@ -138,8 +158,8 @@ namespace olproxy
                 var packet = new byte[len + 19];
                 for (int i = 0; i < len; i++)
                     packet[i + 19] = (byte)(buf[ofs + i] ^ 204);
-                BitConverter.GetBytes(mySeq).CopyTo(packet, 0);
-                BitConverter.GetBytes(myPid).CopyTo(packet, 4);
+                BitConverter.GetBytes(seq).CopyTo(packet, 0);
+                BitConverter.GetBytes(pid).CopyTo(packet, 4);
                 BitConverter.GetBytes(hash).CopyTo(packet, 8);
                 BitConverter.GetBytes((short)buf.Length).CopyTo(packet, 12);
                 BitConverter.GetBytes(closePacket ? 0 : (short)packetCount).CopyTo(packet, 14);
@@ -157,9 +177,9 @@ namespace olproxy
             return packets;
         }
 
-        public void SendMulti(string msg, Socket socket, IPEndPoint[] endPoints)
+        public void SendMulti(string msg, Socket socket, IPEndPoint[] endPoints, int pid = -1)
         {
-            var packets = MessageToPackets(msg);
+            var packets = MessageToPackets(msg, pid);
             foreach (var endPoint in endPoints)
                 foreach (var packet in packets)
                     socket.SendTo(packet, endPoint);
@@ -173,7 +193,7 @@ namespace olproxy
                 string password = new Regex(
                     "\\\\\"password\\\\\":\\{\\\\\"attributeType\\\\\":\\\\\"STRING_LIST\\\\\",\\\\\"valueAttribute\\\\\":\\[\\\\\"([^\"]+)\\\\\"\\]}"
                     ).Match(msg).Groups[1].Value;
-                var i = password.IndexOf(' ');
+                var i = password.IndexOf('_');
                 var name = i == -1 ? password : password.Substring(0, i);
                 if (!new Regex(@"\d{1,3}([.]\d{1,3}){3}").IsMatch(name) || !IPAddress.TryParse(name, out IPAddress adr)) {
                     var adrs = name.Contains('.') ? Dns.GetHostAddresses(name) : null;
