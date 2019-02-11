@@ -46,8 +46,11 @@ namespace olproxy
             fakePids = new Dictionary<BroadcastPeerId, int>();
             foreach (NetworkInterface intf in NetworkInterface.GetAllNetworkInterfaces())
             {
+                var ipProps = intf.GetIPProperties();
+                if (intf.OperationalStatus != OperationalStatus.Up || ipProps == null)
+                    continue;
                 bool loopback = intf.NetworkInterfaceType == NetworkInterfaceType.Loopback;
-                foreach (UnicastIPAddressInformation addr in intf.GetIPProperties().UnicastAddresses)
+                foreach (UnicastIPAddressInformation addr in ipProps.UnicastAddresses)
                 {
                     if (addr.Address.AddressFamily != AddressFamily.InterNetwork)
                         continue;
@@ -64,6 +67,7 @@ namespace olproxy
                 }
             }
             BroadcastEndpoints = eps.ToArray();
+            AddMessage("Found local broadcast addresses " + String.Join(", ", BroadcastEndpoints.Select(x => x.ToString())));
         }
 
 
