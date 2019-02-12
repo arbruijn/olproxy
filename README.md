@@ -35,3 +35,10 @@ Download a binary release and run olproxy.exe
 Install .NET Core SDK 2.2, download the source code and run:
 
 `dotnet run -f netcoreapp2.2`
+
+
+#### How does it work
+
+Overload sends broadcast packets to every host on the LAN to look for a server. The olproxy program intercepts these broadcast packets and sends them to a remote server, based on the password in the packets. When the remote server responds, it sends the responses back as broadcast packets that Overload will see. This way Overload can find the remote server. To make sure Overload connects to the remote server, the olproxy program changes the IP adres from the server in the packets.
+
+After a server is selected, olproxy is no longer involved. Overload will then communicate directly with the remote server.
