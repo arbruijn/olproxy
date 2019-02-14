@@ -24,7 +24,7 @@ This is an unaffiliated, unsupported tool. Use at your own risk.
 
 -  Start the Overload server
 
--  Share your IP or hostname (but only one of them, everybody must use the same text)
+-  Share your internet (WAN) IP or hostname (but only one of them, everybody must use the same text)
 
 #### How to run on Windows
 
