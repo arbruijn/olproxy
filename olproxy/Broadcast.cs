@@ -41,13 +41,8 @@ namespace olproxy
 
     class BroadcastHandler
     {
-        public const int defaultRemotePort = 8001;
-
-        UdpClient socket;
         public Dictionary<BroadcastPeerId, BroadcastPeer> peers = new Dictionary<BroadcastPeerId, BroadcastPeer>();
         public HashSet<int> activeFakePids = new HashSet<int>();
-        Guid uid = Guid.NewGuid();
-        int myPid = System.Diagnostics.Process.GetCurrentProcess().Id;
 
         public Action<string> AddMessage;
 
@@ -87,10 +82,10 @@ namespace olproxy
 
             var now = DateTime.UtcNow;
             var timeout = now.AddSeconds(-20);
-            if (!peers.TryGetValue(peerId, out BroadcastPeer peer) || peer.lastTime.CompareTo(timeout) < 0)
+            if (!peers.TryGetValue(peerId, out BroadcastPeer peer) || peer.lastTime < timeout)
             {
                 // remove timed out peers
-                foreach (var x in peers.Keys.Where(x => peers[x].lastTime.CompareTo(timeout) < 0).ToList())
+                foreach (var x in peers.Keys.Where(x => peers[x].lastTime < timeout).ToList())
                 {
                     activeFakePids.Remove(peers[x].fakePid);
                     peers.Remove(x);
@@ -118,11 +113,8 @@ namespace olproxy
                     var buf = new byte[totalSize];
                     int ofs = 0;
                     foreach (var part in peer.curParts)
-                    {
-                        byte[] msg = part as byte[];
-                        for (int i = 19; i < msg.Length; i++)
-                            buf[ofs++] = (byte)(msg[i] ^ 204);
-                    }
+                        for (int i = 19; i < part.Length; i++)
+                            buf[ofs++] = (byte)(part[i] ^ 204);
                     peer.curParts = null;
                     peer.lastSeq--; // allow receiving this seq again
                     uint hash = BitConverter.ToUInt32(packet, 8);
@@ -136,14 +128,12 @@ namespace olproxy
         }
 
         Dictionary<int, int> pidSeq = new Dictionary<int, int>();
-        List<byte[]> MessageToPackets(string msg, int pid = -1)
+        List<byte[]> MessageToPackets(string msg, int pid)
         {
             bool closePacket = msg.Length == 0;
             byte[] buf = Encoding.UTF8.GetBytes(msg);
             int maxPacketSize = 384;
             int packetCount = closePacket ? 1 : (buf.Length + maxPacketSize - 1) / maxPacketSize;
-            if (pid == -1)
-                pid = myPid;
             if (!pidSeq.TryGetValue(pid, out int seq))
                 seq = -1;
             pidSeq[pid] = ++seq;
@@ -176,7 +166,7 @@ namespace olproxy
             return packets;
         }
 
-        public void SendMulti(string msg, Socket socket, IEnumerable<IPEndPoint> endPoints, int pid = -1)
+        public void SendMulti(string msg, Socket socket, IEnumerable<IPEndPoint> endPoints, int pid)
         {
             var packets = MessageToPackets(msg, pid);
             foreach (var endPoint in endPoints)
@@ -184,7 +174,7 @@ namespace olproxy
                     socket.SendTo(packet, endPoint);
         }
 
-        public void Send(string msg, Socket socket, IPEndPoint endPoint, int pid = -1)
+        public void Send(string msg, Socket socket, IPEndPoint endPoint, int pid)
         {
             SendMulti(msg, socket, new [] { endPoint }, pid);
         }
