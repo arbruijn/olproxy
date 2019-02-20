@@ -49,6 +49,8 @@ namespace olproxy
         Guid uid = Guid.NewGuid();
         int myPid = System.Diagnostics.Process.GetCurrentProcess().Id;
 
+        public Action<string> AddMessage;
+
         public static int GetPacketPID(byte[] packet)
         {
             return BitConverter.ToInt32(packet, 4);
@@ -170,14 +172,11 @@ namespace olproxy
                     chksum += packet[i];
                 packet[18] = chksum;
                 packets.Add(packet);
-                //var sep = new IPEndPoint(new IPAddress(new byte[] { 192, 168, 11, 255 }), 8000);
-                //socket.Send(pbuf, pbuf.Length, ep);
-                //HandlePacket(new IPEndPoint(IPAddress.Any, 12345), pbuf);
             }
             return packets;
         }
 
-        public void SendMulti(string msg, Socket socket, IPEndPoint[] endPoints, int pid = -1)
+        public void SendMulti(string msg, Socket socket, IEnumerable<IPEndPoint> endPoints, int pid = -1)
         {
             var packets = MessageToPackets(msg, pid);
             foreach (var endPoint in endPoints)
@@ -185,93 +184,9 @@ namespace olproxy
                     socket.SendTo(packet, endPoint);
         }
 
-        public IPEndPoint[] FindMessageEndPoints(string msg)
+        public void Send(string msg, Socket socket, IPEndPoint endPoint, int pid = -1)
         {
-            string msgName = new Regex("\"name\":\"([^\"]+)\",\"uid\":").Match(msg).Groups[1].Value;
-            if (msgName == "MMRequest") // client -> server
-            {
-                string password = new Regex(
-                    "\\\\\"password\\\\\":\\{\\\\\"attributeType\\\\\":\\\\\"STRING_LIST\\\\\",\\\\\"valueAttribute\\\\\":\\[\\\\\"([^\"]+)\\\\\"\\]}"
-                    ).Match(msg).Groups[1].Value;
-                var i = password.IndexOf('_');
-                var name = i == -1 ? password : password.Substring(0, i);
-                if (!new Regex(@"\d{1,3}([.]\d{1,3}){3}").IsMatch(name) || !IPAddress.TryParse(name, out IPAddress adr)) {
-                    var adrs = name.Contains('.') ? Dns.GetHostAddresses(name) : null;
-                    if (adrs == null || adrs.Length == 0)
-                        return null;
-                    adr = adrs[0];
-                }
-                return new IPEndPoint[]{new IPEndPoint(adr, defaultRemotePort)};
-            }
-            if (msgName == "MMMatch") // server -> client
-            {
-                
-            }
-            return null;
-        }
-
-        string MkAnswer(string msg)
-        {
-            string ticketType = new Regex("\"mm_ticketType\":[{]\"S\":\"([^\"]+)\"[}]").Match(msg).Groups[1].Value;
-            string ticket = new Regex("\"mm_ticket\":[{]\"S\":\"([^\"]+)\"[}]").Match(msg).Groups[1].Value;
-            string time = new Regex("\"mm_createTime\":[{]\"S\":\"([^\"]+)\"[}]").Match(msg).Groups[1].Value;
-            string players = new Regex("\"mm_players\":[{]\"S\":\"[[](.*)[]]\"[}]").Match(msg).Groups[1].Value;
-            string player = new Regex("\\\\\"PlayerId\\\\\":\\\\\"([^\\\\]+)\\\\\"").Match(msg).Groups[1].Value;
-            string tplayer = Guid.NewGuid().ToString();
-
-            //string ip = "192.168.11.235";
-            //int port = 7621;
-            string ip = "159.69.83.128";
-            int port = 7622;
-            AddMessage($"ticket: {ticket} time: {time} players: {players} player: {player}");
-            string res;
-            if (ticketType == "request")
-                res = $@"{{""max"":8,""name"":""MMMatch"",""uid"":""{uid}"",""attr"":{{""mm_ticketType"":{{""S"":""pending""}},""mm_claims"":{{""S"":""{ticket}""}},""mm_createTime"":{{""S"":""{time}""}}}}}}";
-            else
-                res = $"{{\"max\":8,\"name\":\"MMMatch\",\"uid\":\"{uid}\"," +
-                    $"\"attr\":{{\"mm_ticketType\":{{\"S\":\"match\"}},\"mm_claims\":{{\"S\":\"{ticket}\"}}," +
-                    $"\"mm_createTime\":{{\"S\":\"{time}\"}},\"internalIP\":{{\"S\":\"{ip}\"}},\"port\":{{\"I\":{port}}}," +
-                    $"\"mm_mmGSArn\":{{\"S\":\"arn:aws:local:local-lan::gamesession/fleet-00000000-0000-0000-0000-000000000000/5112e4e8-140c-4612-99ae-a5591370f742\"}}," +
-                    $"\"mm_mmTickets\":{{\"S\":\"{ticket}\"}},\"mm_mmPlayerIds\":{{\"S\":\"{ticket}:{player}={tplayer}\"}},\"mm_mmPlayers\":{{\"S\":\"[{players}]\"}}}}}}";
-            AddMessage($"res: {res}");
-            return res;
-        }
-
-        public void Run()
-        {
-            int listenPort = 8000;
-            socket = new UdpClient();
-            //socket.EnableBroadcast = true;
-            //socket.DontFragment = true;
-            //socket.ExclusiveAddressUse = false;
-            socket.MulticastLoopback = false;
-            //socket.EnableBroadcast = true;
-            //socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.DontRoute, 1);
-            //socket.Client.ExclusiveAddressUse = false;
-            //socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ExclusiveAddressUse, 0);
-            socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, 1);
-            //socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, 1);
-            socket.Client.Bind(new IPEndPoint(IPAddress.Any, listenPort));
-            //socket.BeginReceive(new AsyncCallback(OnUdpData), this);
-            AddMessage("Ready.");
-            while (true)
-            {
-                var source = new IPEndPoint(0, 0);
-                var message = socket.Receive(ref source);
-                HandlePacket(source, message);
-            }
-        }
-
-        private void AddMessage(string msg)
-        {
-            Console.WriteLine(msg);
-        }
-
-        public static void test() {
-            var msg = @"{""max"":2,""name"":""MMRequest"",""uid"":""60d07295-31cd-4bf4-96e3-e5ad3c7fef90"",""attr"":{""mm_ticketType"":{""S"":""request""},""mm_name"":{""S"":""PRIVATE-Overload-PROD""},""mm_ticket"":{""S"":""5b83d89d-eab3-4744-9acd-132c71719e72""},""mm_version"":{""I"":11},""mm_players"":{""S"":""[{\""PlayerId\"":\""67e3e780-b368-11e8-a0d7-0d8a3d4259a5\"",\""Team\"":\""players\"",\""PlayerAttributes\"":{\""private_match_data\"":{\""attributeType\"":\""STRING\"",\""valueAttribute\"":\""BGFybmWQGBAFAADAwAAoAmoAAAAAEJCAAA==\""},\""password\"":{\""attributeType\"":\""STRING_LIST\"",\""valueAttribute\"":[\""vps1.2ar.nl\""]},\""private_initiator\"":{\""attributeType\"":\""DOUBLE\"",\""valueAttribute\"":1},\""max_num_players\"":{\""attributeType\"":\""DOUBLE\"",\""valueAttribute\"":1},\""devId\"":{\""attributeType\"":\""STRING\"",\""valueAttribute\"":\""PROD\""},\""version\"":{\""attributeType\"":\""DOUBLE\"",\""valueAttribute\"":11},\""playlists\"":{\""attributeType\"":\""STRING_LIST\"",\""valueAttribute\"":[\""private\""]},\""skill\"":{\""attributeType\"":\""DOUBLE\"",\""valueAttribute\"":500},\""platform_self\"":{\""attributeType\"":\""STRING_LIST\"",\""valueAttribute\"":[\""pc\""]},\""platform_other\"":{\""attributeType\"":\""STRING_LIST\"",\""valueAttribute\"":[\""pc\"",\""ps4\"",\""xbox\""]},\""uid\"":{\""attributeType\"":\""STRING\"",\""valueAttribute\"":\""99ea9514-186e-423f-875b-78a1452b59e6\""}}}]""},""mm_createTime"":{""S"":""48D630E5F3E43ACA""}}}";
-            var ep = new BroadcastHandler().FindMessageEndPoints(msg);
-            Debug.WriteLine(ep == null ? "null" : ep[0].ToString());
-            //DateTime.UtcNow.CompareTo(
+            SendMulti(msg, socket, new [] { endPoint }, pid);
         }
     }
 }

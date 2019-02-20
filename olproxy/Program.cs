@@ -22,15 +22,23 @@ namespace olproxy
     class Program
     {
         private const int broadcastPort = 8000;
+        private const int remotePort = 8001;
         private IPEndPoint[] BroadcastEndpoints;
         private HashSet<IPAddress> LocalIPSet;
         private IPAddress FirstLocalIP;
         private Dictionary<BroadcastPeerId, int> fakePids;
+        private Dictionary<IPAddress, IPEndPoint> localIPToBroadcastEndPoint;
+        private UdpClient localSocket, remoteSocket;
+        private BroadcastHandler bcast;
+        private int myPid;
+        private Dictionary<IPEndPoint, DateTime> remotePeers;
+        private IPAddress curLocalIP;
+        private DateTime curLocalIPLast;
 
-        #if NETCORE
+#if NETCORE
         [DllImport("libc", SetLastError = true)]
         private unsafe static extern int setsockopt(int socket, int level, int option_name, void* option_value, uint option_len);
-        #endif
+#endif
 
         void AddMessage(string s)
         {
@@ -38,12 +46,13 @@ namespace olproxy
             Debug.WriteLine(s);
         }
 
-        void Init()
+        void InitInterfaces()
         {
             LocalIPSet = new HashSet<IPAddress>();
             List<IPEndPoint> eps = new List<IPEndPoint>();
             FirstLocalIP = null;
             fakePids = new Dictionary<BroadcastPeerId, int>();
+            localIPToBroadcastEndPoint = new Dictionary<IPAddress, IPEndPoint>();
             foreach (NetworkInterface intf in NetworkInterface.GetAllNetworkInterfaces())
             {
                 var ipProps = intf.GetIPProperties();
@@ -63,6 +72,7 @@ namespace olproxy
                         uint ipMask = BitConverter.ToUInt32(addr.IPv4Mask.GetAddressBytes(), 0);
                         var broadcast = new IPAddress(BitConverter.GetBytes(ipAddress | ~ipMask));
                         eps.Add(new IPEndPoint(broadcast, broadcastPort));
+                        localIPToBroadcastEndPoint[addr.Address] = new IPEndPoint(broadcast, broadcastPort);
                     }
                 }
             }
@@ -70,107 +80,192 @@ namespace olproxy
             AddMessage("Found local broadcast addresses " + String.Join(", ", BroadcastEndpoints.Select(x => x.ToString())));
         }
 
-
-        void MainLoop()
+        void InitSockets()
         {
-            var bcast = new BroadcastHandler();
-            int myPid = System.Diagnostics.Process.GetCurrentProcess().Id;
-
-            int remotePort = 8001;
-            UdpClient remoteSocket = new UdpClient();
+            remoteSocket = new UdpClient();
             remoteSocket.Client.Bind(new IPEndPoint(IPAddress.Any, remotePort));
 
-            UdpClient localSocket = new UdpClient();
+            localSocket = CreateUDPBroadcastSocket();
+            localSocket.Client.Bind(new IPEndPoint(IPAddress.Any, broadcastPort));
+        }
+
+        void Init()
+        {
+            InitInterfaces();
+            InitSockets();
+
+            bcast = new BroadcastHandler() { AddMessage = AddMessage };
+            myPid = System.Diagnostics.Process.GetCurrentProcess().Id;
+            remotePeers = new Dictionary<IPEndPoint, DateTime>();
+            curLocalIP = null;
+            curLocalIPLast = DateTime.MinValue;
+        }
+
+        UdpClient CreateUDPBroadcastSocket()
+        {
+            UdpClient socket = new UdpClient();
             //socket.EnableBroadcast = true;
             //socket.DontFragment = true;
             //socket.ExclusiveAddressUse = false;
-            localSocket.MulticastLoopback = false;
-            localSocket.EnableBroadcast = true;
+            socket.MulticastLoopback = false;
+            socket.EnableBroadcast = true;
             //socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.DontRoute, 1);
             //socket.Client.ExclusiveAddressUse = false;
             //socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ExclusiveAddressUse, 0);
-            localSocket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, 1);
-            #if NETCORE
+            socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, 1);
+#if NETCORE
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) {
                 unsafe {
                     // set SO_REUSEADDR (https://github.com/dotnet/corefx/issues/32027)
                     int value = 1;
-                    setsockopt(localSocket.Client.Handle.ToInt32(), 1, 2, &value, sizeof(int));
+                    setsockopt(socket.Client.Handle.ToInt32(), 1, 2, &value, sizeof(int));
                 }
             }
-            #endif
+#endif
             //socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, 1);
-            localSocket.Client.Bind(new IPEndPoint(IPAddress.Any, broadcastPort));
-            //socket.BeginReceive(new AsyncCallback(OnUdpData), this);
+            return socket;
+        }
+
+        class ParsedMessage
+        {
+            public bool IsRequest; // client -> server
+            public string Password;
+        }
+
+        private static readonly Regex msgNameRegex = new Regex("\"name\":\"([^\"]+)\",\"uid\":");
+        private static readonly Regex msgPasswordRegex = new Regex(
+                    "\\\\\"password\\\\\":\\{\\\\\"attributeType\\\\\":\\\\\"STRING_LIST\\\\\",\\\\\"valueAttribute\\\\\":\\[\\\\\"([^\"]+)\\\\\"\\]}"
+                    );
+        
+        private static IPAddress FindPasswordAddress(string password)
+        {
+            var i = password.IndexOf('_'); // allow password suffix with '_'
+            var name = i == -1 ? password : password.Substring(0, i);
+            if (!name.Contains('.'))
+                return null;
+            if (new Regex(@"\d{1,3}([.]\d{1,3}){3}").IsMatch(name) &&
+                IPAddress.TryParse(name, out IPAddress adr))
+                return adr;
+            var adrs = Dns.GetHostAddresses(name);
+            return adrs == null || adrs.Length == 0 ? null : adrs[0];
+        }
+
+        private static ParsedMessage ParseMessage(string message)
+        {
+            string msgName = msgNameRegex.Match(message)?.Groups[1].Value;
+            var ret = new ParsedMessage();
+            ret.IsRequest = msgName == "MMRequest";
+            if (ret.IsRequest)
+                ret.Password = msgPasswordRegex.Match(message)?.Groups[1].Value;
+            return ret;
+        }
+
+        void ProcessLocalPacket(IPEndPoint endPoint, byte[] packet)
+        {
+            if (!LocalIPSet.Contains(endPoint.Address)) // v0.2 policy: only accept local packets, better for multiple olproxies on LAN
+                return;
+
+            var pktPid = BroadcastHandler.GetPacketPID(packet);
+            if (bcast.activeFakePids.Contains(pktPid)) // ignore packets sent by ourself
+                return;
+
+            // v0.2 policy: only accept packets from single local ip, allow ip change if idle for 20 seconds
+            var now = DateTime.UtcNow;
+            var timeout = now.AddSeconds(-20);
+            if (curLocalIPLast < timeout)
+            {
+                curLocalIP = endPoint.Address;
+                AddMessage("Using local address " + curLocalIP);
+            }
+            curLocalIPLast = now;
+
+            if (!endPoint.Address.Equals(curLocalIP))
+                return;
+    
+            //if (LocalIPSet.Contains(endPoint.Address)) // treat all local ips as same
+            //    endPoint.Address = FirstLocalIP;
+
+            var msgStr = bcast.HandlePacket(endPoint, packet);
+            if (msgStr == null) // message not yet complete / invalid
+                return;
+
+            var msg = ParseMessage(msgStr);
+            if (msg.IsRequest)
+            {
+                var adr = FindPasswordAddress(msg.Password);
+                if (adr == null)
+                    return;
+                bcast.Send(msgStr, remoteSocket.Client, new IPEndPoint(adr, remotePort), pktPid);
+                return;
+            }
+
+            if (!remotePeers.Any())
+                return;
+
+            var dels = new List<IPEndPoint>();
+            foreach (var peerEP in remotePeers.Keys)
+                if (remotePeers[peerEP] < timeout)
+                    dels.Add(peerEP);
+            foreach (var ep in dels)
+                remotePeers.Remove(ep);
+
+            if (!remotePeers.Any())
+                return;
+
+            if (msgStr != "")
+                AddMessage("Sending to remote " + String.Join(", ", remotePeers.Keys.Select(x => x.ToString())));
+            bcast.SendMulti(msgStr, remoteSocket.Client, remotePeers.Keys, pktPid);
+        }
+
+        void ProcessRemotePacket(IPEndPoint endPoint, byte[] packet)
+        {
+            if (LocalIPSet.Contains(endPoint.Address))
+                return;
+
+            // store peer last seen
+            remotePeers[endPoint] = DateTime.UtcNow;
+
+            var message = bcast.HandlePacket(endPoint, packet);
+            if (message == null) // message not yet complete / invalid
+                return;
+
+            var pktPid = BroadcastHandler.GetPacketPID(packet);
+            var bid = new BroadcastPeerId() { source = endPoint, pid = pktPid };
+            var pid = bcast.peers[bid].fakePid;
+
+            // change advertized ip to ip we've received this from
+            message = new Regex("(\"internalIP\":[{]\"S\":\")([^\"]+)(\"[}])").Replace(message,
+                "${1}" + endPoint.Address + "$3");
+            //Debug.WriteLine("Sending " + message);
+            var broadcastEP = localIPToBroadcastEndPoint[curLocalIP];
+            if (message != "")
+                AddMessage("Sending to local " + broadcastEP + " pid " + pid);
+            bcast.Send(message, localSocket.Client, broadcastEP, pid);
+        }
+
+        void MainLoop()
+        {
             AddMessage("Ready.");
             var taskLocal = localSocket.ReceiveAsync();
             var taskRemote = remoteSocket.ReceiveAsync();
-            var remotePeers = new Dictionary<IPEndPoint, DateTime>();
-            while (true)
+            for (;;)
             {
                 var idx = Task.WaitAny(new Task[] { taskLocal, taskRemote }, 250);
-                var now = DateTime.UtcNow;
-                if (idx == 0) { // local
+                if (idx == 0) // local
+                {
                     var result = taskLocal.Result;
-                    var pktPid = BroadcastHandler.GetPacketPID(result.Buffer);
-                    if (LocalIPSet.Contains(result.RemoteEndPoint.Address)) // treat all local ips as same
-                        result.RemoteEndPoint.Address = FirstLocalIP;
-                    if (!LocalIPSet.Contains(result.RemoteEndPoint.Address) ||
-                        !bcast.activeFakePids.Contains(pktPid))
-                    {
-                        var message = bcast.HandlePacket(result.RemoteEndPoint, result.Buffer);
-                        if (message != null) {
-                            var rem = bcast.FindMessageEndPoints(message);
-                            if (rem == null) { // it's not a client -> server message with destination, try remote peers we've received from
-                                var dels = new List<IPEndPoint>();
-                                var timeout = now.AddSeconds(-20);
-                                int n = 0;
-                                foreach (var peerEP in remotePeers.Keys)
-                                    if (remotePeers[peerEP].CompareTo(timeout) < 0)
-                                        dels.Add(peerEP);
-                                    else
-                                        n++;
-                                foreach (var ep in dels)
-                                    remotePeers.Remove(ep);
-                                if (n > 0)
-                                {
-                                    rem = new IPEndPoint[n];
-                                    remotePeers.Keys.CopyTo(rem, 0);
-                                }
-                            }
-                            if (rem != null)
-                            {
-                                if (message != "")
-                                    AddMessage("Sending to remote " + String.Join(", ", rem.Select(x => x.ToString())));
-                                bcast.SendMulti(message, remoteSocket.Client, rem, pktPid);
-                            }
-                        }
-                    }
+                    ProcessLocalPacket(result.RemoteEndPoint, result.Buffer);
                     taskLocal = localSocket.ReceiveAsync();
-                } else if (idx == 1) { // remote
+                }
+                else if (idx == 1) // remote
+                {
                     var result = taskRemote.Result;
-                    if (!LocalIPSet.Contains(result.RemoteEndPoint.Address))
-                    {
-                        remotePeers[result.RemoteEndPoint] = now;
-                        var message = bcast.HandlePacket(result.RemoteEndPoint, result.Buffer);
-                        if (message != null)
-                        {
-                            var pktPid = BroadcastHandler.GetPacketPID(result.Buffer);
-                            var bid = new BroadcastPeerId() { source = result.RemoteEndPoint, pid = pktPid };
-                            var pid = bcast.peers[bid].fakePid;
-
-                            // change advertized ip to ip we've received this from
-                            message = new Regex("(\"internalIP\":[{]\"S\":\")([^\"]+)(\"[}])").Replace(message,
-                                "${1}" + result.RemoteEndPoint.Address + "$3");
-                            //Debug.WriteLine("Sending " + message);
-                            if (message != "")
-                                AddMessage("Sending to local " + String.Join(", ", BroadcastEndpoints.Select(x => x.ToString())) + " pid " + pid);
-                            bcast.SendMulti(message, localSocket.Client, BroadcastEndpoints, pid);
-                        }
-                    }
+                    ProcessRemotePacket(result.RemoteEndPoint, result.Buffer);
                     taskRemote = remoteSocket.ReceiveAsync();
-                } else if (idx == -1) {
-                    // timeout
+                }
+                else if (idx == -1) // timeout
+                {
+                    
                 }
             }
         }
@@ -178,7 +273,6 @@ namespace olproxy
         void Run(string[] args)
         {
             Init();
-            //BroadcastHandler.test();
             MainLoop();
         }
 
