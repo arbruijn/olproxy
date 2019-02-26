@@ -96,7 +96,8 @@ namespace olproxy
                 }
             }
             BroadcastEndpoints = eps.ToArray();
-            AddMessage("Found local broadcast addresses " + String.Join(", ", BroadcastEndpoints.Select(x => x.Address.ToString())));
+            if (debug)
+                AddMessage("Found local broadcast addresses " + String.Join(", ", BroadcastEndpoints.Select(x => x.Address.ToString())));
         }
 
         void InitSockets()
@@ -163,10 +164,10 @@ namespace olproxy
                     "\\\\\"password\\\\\":\\{\\\\\"attributeType\\\\\":\\\\\"STRING_LIST\\\\\",\\\\\"valueAttribute\\\\\":\\[\\\\\"([^\"]+)\\\\\"\\]}"
                     );
         
-        private static IPAddress FindPasswordAddress(string password)
+        private static IPAddress FindPasswordAddress(string password, out string name)
         {
             var i = password.IndexOf('_'); // allow password suffix with '_'
-            var name = i == -1 ? password : password.Substring(0, i);
+            name = i == -1 ? password : password.Substring(0, i);
             if (!name.Contains('.'))
                 return null;
             if (new Regex(@"\d{1,3}([.]\d{1,3}){3}").IsMatch(name) &&
@@ -203,7 +204,7 @@ namespace olproxy
             var timeout = now.AddSeconds(-10);
             if (curLocalIPLast < timeout)
             {
-                if (!endPoint.Address.Equals(curLocalIP))
+                if (debug && !endPoint.Address.Equals(curLocalIP))
                     AddMessage("Using local address " + endPoint.Address);
                 curLocalIP = endPoint.Address;
             }
@@ -222,16 +223,17 @@ namespace olproxy
             var msg = ParseMessage(msgStr);
             if (msg.IsRequest)
             {
-                var adr = FindPasswordAddress(msg.Password);
+                var adr = FindPasswordAddress(msg.Password, out string hostname);
                 if (adr == null)
                     return;
                 var destEndPoint = new IPEndPoint(adr, remotePort);
                 if (isNew)
                     AddMessage(debug ? pktPid + " " + isNew + " Sending match " + msg.ticketType +
                         " " + msg.ticket +
-                        " to server " + destEndPoint.Address :
+                        " to server " + hostname :
                         "Sending " + (msg.HasPrivateMatchData ? "create" : "join") + " match " + msg.ticketType +
-                            (msg.HasPrivateMatchData ? " (" + new MatchInfo(msgStr) + ")" : ""));
+                            (msg.HasPrivateMatchData ? " (" + new MatchInfo(msgStr) + ")" : "") +
+                            " to " + hostname);
                 else
                     spinner.Spin();
                 bcast.Send(msgStr, remoteSocket.Client, destEndPoint, pktPid, isNew);
@@ -307,7 +309,7 @@ namespace olproxy
 
         void MainLoop()
         {
-            AddMessage("Ready.");
+            AddMessage("Ready. Create/Join LAN Match in Overload and use server IP address as password (or start Overload server)");
             var taskLocal = localSocket.ReceiveAsync();
             var taskRemote = remoteSocket.ReceiveAsync();
             var tasks = new Task[2];
