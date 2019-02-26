@@ -1,13 +1,17 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
+using minijson;
 
 /*
 example message exachange:
@@ -19,6 +23,17 @@ server -> client {"max":8,"name":"MMMatch","uid":"91a3526c-ea24-4b02-8e43-448862
 
 namespace olproxy
 {
+    class ProxyPeerInfo
+    {
+// not yet used
+/*
+        public bool IsRemote;
+        public bool IsServer;
+        public bool IsTeam;
+        public MatchInfo MatchInfo; // server only
+*/
+    }
+
     class Program
     {
         private const int broadcastPort = 8000;
@@ -27,13 +42,14 @@ namespace olproxy
         private HashSet<IPAddress> LocalIPSet;
         private IPAddress FirstLocalIP;
         private Dictionary<BroadcastPeerId, int> fakePids;
-        private Dictionary<IPAddress, IPEndPoint> localIPToBroadcastEndPoint;
         private UdpClient localSocket, remoteSocket;
-        private BroadcastHandler bcast;
+        private BroadcastHandler<ProxyPeerInfo> bcast;
         private int myPid;
         private Dictionary<IPEndPoint, DateTime> remotePeers;
         private IPAddress curLocalIP;
         private DateTime curLocalIPLast;
+        private bool debug;
+        private ConsoleSpinner spinner = new ConsoleSpinner();
 
 #if NETCORE
         [DllImport("libc", SetLastError = true)]
@@ -42,7 +58,12 @@ namespace olproxy
 
         void AddMessage(string s)
         {
-            Console.WriteLine(s);
+            Console.WriteLine(DateTime.Now.ToLongTimeString() + " " + s);
+            Debug.WriteLine(s);
+        }
+
+        void AddMessageDebug(string s)
+        {
             Debug.WriteLine(s);
         }
 
@@ -52,7 +73,6 @@ namespace olproxy
             List<IPEndPoint> eps = new List<IPEndPoint>();
             FirstLocalIP = null;
             fakePids = new Dictionary<BroadcastPeerId, int>();
-            localIPToBroadcastEndPoint = new Dictionary<IPAddress, IPEndPoint>();
             foreach (NetworkInterface intf in NetworkInterface.GetAllNetworkInterfaces())
             {
                 var ipProps = intf.GetIPProperties();
@@ -72,12 +92,11 @@ namespace olproxy
                         uint ipMask = BitConverter.ToUInt32(addr.IPv4Mask.GetAddressBytes(), 0);
                         var broadcast = new IPAddress(BitConverter.GetBytes(ipAddress | ~ipMask));
                         eps.Add(new IPEndPoint(broadcast, broadcastPort));
-                        localIPToBroadcastEndPoint[addr.Address] = new IPEndPoint(broadcast, broadcastPort);
                     }
                 }
             }
             BroadcastEndpoints = eps.ToArray();
-            AddMessage("Found local broadcast addresses " + String.Join(", ", BroadcastEndpoints.Select(x => x.ToString())));
+            AddMessage("Found local broadcast addresses " + String.Join(", ", BroadcastEndpoints.Select(x => x.Address.ToString())));
         }
 
         void InitSockets()
@@ -94,7 +113,7 @@ namespace olproxy
             InitInterfaces();
             InitSockets();
 
-            bcast = new BroadcastHandler() { AddMessage = AddMessage };
+            bcast = new BroadcastHandler<ProxyPeerInfo>() { AddMessage = AddMessageDebug};
             myPid = System.Diagnostics.Process.GetCurrentProcess().Id;
             remotePeers = new Dictionary<IPEndPoint, DateTime>();
             curLocalIP = null;
@@ -130,9 +149,16 @@ namespace olproxy
         {
             public bool IsRequest; // client -> server
             public string Password;
+            public string ticketType;
+            public string ticket;
+            public bool HasPrivateMatchData;
         }
 
         private static readonly Regex msgNameRegex = new Regex("\"name\":\"([^\"]+)\",\"uid\":");
+        private static readonly Regex msgTicketTypeRegex = new Regex("[{,]\"mm_ticketType\":[{]\"S\":\"([^\"]+)\"");
+        private static readonly Regex msgTicket = new Regex("[{,]\"mm_ticket\":[{]\"S\":\"([^\"]+)\"");
+        private static readonly Regex msgClaims = new Regex("[{,]\"mm_claims\":[{]\"S\":\"([^\"]+)\"");
+        private static readonly Regex msgPrivateMatchData = new Regex("[{,]\\\\\"private_match_data\\\\\":");
         private static readonly Regex msgPasswordRegex = new Regex(
                     "\\\\\"password\\\\\":\\{\\\\\"attributeType\\\\\":\\\\\"STRING_LIST\\\\\",\\\\\"valueAttribute\\\\\":\\[\\\\\"([^\"]+)\\\\\"\\]}"
                     );
@@ -155,8 +181,11 @@ namespace olproxy
             string msgName = msgNameRegex.Match(message)?.Groups[1].Value;
             var ret = new ParsedMessage();
             ret.IsRequest = msgName == "MMRequest";
+            ret.ticketType = msgTicketTypeRegex.Match(message)?.Groups[1].Value;
             if (ret.IsRequest)
                 ret.Password = msgPasswordRegex.Match(message)?.Groups[1].Value;
+            ret.ticket = (ret.IsRequest ? msgTicket : msgClaims).Match(message)?.Groups[1].Value;
+            ret.HasPrivateMatchData = msgPrivateMatchData.IsMatch(message);
             return ret;
         }
 
@@ -165,17 +194,18 @@ namespace olproxy
             if (!LocalIPSet.Contains(endPoint.Address)) // v0.2 policy: only accept local packets, better for multiple olproxies on LAN
                 return;
 
-            var pktPid = BroadcastHandler.GetPacketPID(packet);
+            var pktPid = BroadcastHandler<ProxyPeerInfo>.GetPacketPID(packet);
             if (bcast.activeFakePids.Contains(pktPid)) // ignore packets sent by ourself
                 return;
 
-            // v0.2 policy: only accept packets from single local ip, allow ip change if idle for 20 seconds
+            // v0.2 policy: only accept packets from single local ip, allow ip change if idle for 10 seconds
             var now = DateTime.UtcNow;
-            var timeout = now.AddSeconds(-20);
+            var timeout = now.AddSeconds(-10);
             if (curLocalIPLast < timeout)
             {
+                if (!endPoint.Address.Equals(curLocalIP))
+                    AddMessage("Using local address " + endPoint.Address);
                 curLocalIP = endPoint.Address;
-                AddMessage("Using local address " + curLocalIP);
             }
             curLocalIPLast = now;
 
@@ -185,7 +215,7 @@ namespace olproxy
             //if (LocalIPSet.Contains(endPoint.Address)) // treat all local ips as same
             //    endPoint.Address = FirstLocalIP;
 
-            var msgStr = bcast.HandlePacket(endPoint, packet);
+            var msgStr = bcast.HandlePacket(endPoint, packet, out bool isNew, out BroadcastPeer<ProxyPeerInfo> peer);
             if (msgStr == null) // message not yet complete / invalid
                 return;
 
@@ -195,7 +225,16 @@ namespace olproxy
                 var adr = FindPasswordAddress(msg.Password);
                 if (adr == null)
                     return;
-                bcast.Send(msgStr, remoteSocket.Client, new IPEndPoint(adr, remotePort), pktPid);
+                var destEndPoint = new IPEndPoint(adr, remotePort);
+                if (isNew)
+                    AddMessage(debug ? pktPid + " " + isNew + " Sending match " + msg.ticketType +
+                        " " + msg.ticket +
+                        " to server " + destEndPoint.Address :
+                        "Sending " + (msg.HasPrivateMatchData ? "create" : "join") + " match " + msg.ticketType +
+                            (msg.HasPrivateMatchData ? " (" + new MatchInfo(msgStr) + ")" : ""));
+                else
+                    spinner.Spin();
+                bcast.Send(msgStr, remoteSocket.Client, destEndPoint, pktPid, isNew);
                 return;
             }
 
@@ -212,9 +251,20 @@ namespace olproxy
             if (!remotePeers.Any())
                 return;
 
-            if (msgStr != "")
-                AddMessage("Sending to remote " + String.Join(", ", remotePeers.Keys.Select(x => x.ToString())));
-            bcast.SendMulti(msgStr, remoteSocket.Client, remotePeers.Keys, pktPid);
+            //if (msgStr == "")
+            //    bcast.peers.Remove(new BroadcastPeerId() { source = endPoint, pid = BroadcastHandler.GetPacketPID(packet) });
+
+            if (isNew)
+                AddMessage(debug ? pktPid + " Sending match " +
+                        (msgStr == "" ? "done" : msg.ticketType + " " + msg.ticket) +
+                        " to clients " + String.Join(", ", remotePeers.Keys.Select(x => x.Address.ToString())) :
+                    "Sending " + (msgStr != "" ? (msg.HasPrivateMatchData ? "create " : "join ") : "") +
+                        "match " + (msgStr == "" ? "done" : msg.ticketType) +
+                        (msg.HasPrivateMatchData || msg.ticketType == "match" ? " (" + new MatchInfo(msgStr) + ")": ""));
+            else
+                spinner.Spin();
+            Debug.WriteLine((msgStr == "" ? "done" : msg.ticketType) + " to " + String.Join(", ", remotePeers.Keys.Select(x => x.ToString())));
+            bcast.SendMulti(msgStr, remoteSocket.Client, remotePeers.Keys, pktPid, isNew);
         }
 
         void ProcessRemotePacket(IPEndPoint endPoint, byte[] packet)
@@ -225,22 +275,34 @@ namespace olproxy
             // store peer last seen
             remotePeers[endPoint] = DateTime.UtcNow;
 
-            var message = bcast.HandlePacket(endPoint, packet);
+            var message = bcast.HandlePacket(endPoint, packet, out bool isNew, out BroadcastPeer<ProxyPeerInfo> peer);
             if (message == null) // message not yet complete / invalid
                 return;
 
-            var pktPid = BroadcastHandler.GetPacketPID(packet);
-            var bid = new BroadcastPeerId() { source = endPoint, pid = pktPid };
-            var pid = bcast.peers[bid].fakePid;
+            var pid = peer.fakePid;
+
+            if (message == "" && peer != null) {
+                Debug.WriteLine("Removing peer " + peer.peerId);
+                bcast.peers.Remove(peer.peerId);
+            }
 
             // change advertized ip to ip we've received this from
             message = new Regex("(\"internalIP\":[{]\"S\":\")([^\"]+)(\"[}])").Replace(message,
                 "${1}" + endPoint.Address + "$3");
-            //Debug.WriteLine("Sending " + message);
-            var broadcastEP = localIPToBroadcastEndPoint[curLocalIP];
-            if (message != "")
-                AddMessage("Sending to local " + broadcastEP + " pid " + pid);
-            bcast.Send(message, localSocket.Client, broadcastEP, pid);
+
+            if (isNew)
+            {
+                var msg = ParseMessage(message);
+                string ticketType = message == "" ? "done" : msg.ticketType;
+                AddMessage(debug ? peer.lastNewSeq + " Received match " + ticketType + " " + msg.ticket +
+                    ", forward to " + String.Join(", ", BroadcastEndpoints.Select(x => x.ToString())) + " pid " + pid :
+                    "Received " + (msg.IsRequest ? msg.HasPrivateMatchData ? "create " : "join " : "") + "match " + ticketType +
+                    (msg.HasPrivateMatchData || msg.ticketType == "match" ? " (" + new MatchInfo(message) + ")" : ""));
+            }
+            else
+                spinner.Spin();
+            Debug.WriteLine("Received " + ParseMessage(message).ticketType + " forward to " + String.Join(", ", BroadcastEndpoints.Select(x => x.ToString())) + " pid " + pid);
+            bcast.SendMulti(message, localSocket.Client, BroadcastEndpoints, pid, isNew);
         }
 
         void MainLoop()
@@ -248,9 +310,12 @@ namespace olproxy
             AddMessage("Ready.");
             var taskLocal = localSocket.ReceiveAsync();
             var taskRemote = remoteSocket.ReceiveAsync();
+            var tasks = new Task[2];
             for (;;)
             {
-                var idx = Task.WaitAny(new Task[] { taskLocal, taskRemote }, 250);
+                tasks[0] = taskLocal;
+                tasks[1] = taskRemote;
+                var idx = Task.WaitAny(tasks, spinner.Active ? 1000 : Timeout.Infinite);
                 if (idx == 0) // local
                 {
                     var result = taskLocal.Result;
@@ -265,13 +330,17 @@ namespace olproxy
                 }
                 else if (idx == -1) // timeout
                 {
-                    
                 }
+                if (spinner.Active && spinner.LastUpdateTime < DateTime.UtcNow.AddSeconds(-2))
+                    spinner.Clear();
             }
         }
 
         void Run(string[] args)
         {
+            foreach (var arg in args)
+                if (arg == "-v")
+                    debug = true;
             Init();
             MainLoop();
         }
