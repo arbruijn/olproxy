@@ -309,9 +309,14 @@ namespace olproxy
 
             if (isNew)
             {
-                var matchInfo = new MatchInfo(message);
+                MatchInfo matchInfo = null;
 
                 var msg = ParseMessage(message);
+                if (msg.HasPrivateMatchData || msg.ticketType == "match")
+                {
+                    matchInfo = new MatchInfo(message);
+                }
+
                 string ticketType = message == "" ? "done" : msg.ticketType;
                 AddMessage(debug ? peer.lastNewSeq + " Received match " + ticketType + " " + msg.ticket +
                     ", forward to " + String.Join(", ", BroadcastEndpoints.Select(x => x.ToString())) + " pid " + pid :
@@ -319,16 +324,18 @@ namespace olproxy
                     (msg.HasPrivateMatchData || msg.ticketType == "match" ? " (" + matchInfo + ")" : ""));
 
                 var config = Configuration.Get<AppSettings>();
-                if (config.isServer)
+                if (config.isServer && matchInfo != null)
                 {
                     AddMessage("Updating tracker at " + config.trackerBaseUrl + " with the match information.");
 
-                    http.PostAsync(config.trackerBaseUrl + "/api", new StringContent(JsonConvert.SerializeObject(new
-                    {
+                    http.PostAsync(config.trackerBaseUrl + "/api", new StringContent(JsonConvert.SerializeObject(new {
+                        name = config.serverName,
+                        notes = config.notes,
                         numPlayers = matchInfo.PlayerCount,
                         maxNumPlayers = matchInfo.PrivateMatchData.MaxPlayers,
                         map = matchInfo.PrivateMatchData.LevelName,
-                        mode = matchInfo.PrivateMatchData.GameMode
+                        mode = matchInfo.PrivateMatchData.GameMode,
+                        gameStarted = new DateTime()
                     }), Encoding.UTF8, "application/json"));
                 }
             }
