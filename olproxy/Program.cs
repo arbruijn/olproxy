@@ -54,6 +54,7 @@ namespace olproxy
         private ConsoleSpinner spinner = new ConsoleSpinner();
         static private IConfigurationRoot Configuration;
         private HttpClient http = new HttpClient();
+        private int playerCount = 0;
 
 #if NETCORE
         [DllImport("libc", SetLastError = true)]
@@ -244,14 +245,18 @@ namespace olproxy
                 bcast.Send(msgStr, remoteSocket.Client, destEndPoint, pktPid, isNew);
                 return;
             } else if (msg.IsMatch) {
-                var matchInfo = new MatchInfo(msgStr);
                 var config = Configuration.Get<AppSettings>();
                 if (config.isServer) {
-                    AddMessage("Updating tracker at " + config.trackerBaseUrl + " with player count of " + matchInfo.PlayerCount + ".");
+                    var matchInfo = new MatchInfo(msgStr);
+                    if (playerCount != matchInfo.PlayerCount) {
+                        playerCount = matchInfo.PlayerCount;
 
-                    http.PostAsync(config.trackerBaseUrl + "/api", new StringContent(JsonConvert.SerializeObject(new {
-                        numPlayers = matchInfo.PlayerCount
-                    }), Encoding.UTF8, "application/json"));
+                        AddMessage("Updating tracker at " + config.trackerBaseUrl + " with player count of " + matchInfo.PlayerCount + ".");
+
+                        http.PostAsync(config.trackerBaseUrl + "/api", new StringContent(JsonConvert.SerializeObject(new {
+                            numPlayers = matchInfo.PlayerCount
+                        }), Encoding.UTF8, "application/json"));
+                    }
                 }
             }
 
@@ -335,7 +340,7 @@ namespace olproxy
                         maxNumPlayers = matchInfo.PrivateMatchData.MaxPlayers,
                         map = matchInfo.PrivateMatchData.LevelName,
                         mode = matchInfo.PrivateMatchData.GameMode,
-                        gameStarted = new DateTime()
+                        gameStarted = DateTime.UtcNow
                     }), Encoding.UTF8, "application/json"));
                 }
             }
