@@ -12,8 +12,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Configuration;
-using Newtonsoft.Json;
+using minijson;
 
 /*
 example message exachange:
@@ -25,6 +24,9 @@ server -> client {"max":8,"name":"MMMatch","uid":"91a3526c-ea24-4b02-8e43-448862
 
 namespace olproxy
 {
+    using MJDict = Dictionary<string, object>;
+    using MJList = List<object>;
+
     class ProxyPeerInfo
     {
 // not yet used
@@ -52,7 +54,7 @@ namespace olproxy
         private DateTime curLocalIPLast;
         private bool debug;
         private ConsoleSpinner spinner = new ConsoleSpinner();
-        static private IConfigurationRoot Configuration;
+        private MJDict config;
         private HttpClient http = new HttpClient();
         private int playerCount = 0;
 
@@ -245,16 +247,15 @@ namespace olproxy
                 bcast.Send(msgStr, remoteSocket.Client, destEndPoint, pktPid, isNew);
                 return;
             } else if (msg.IsMatch) {
-                var config = Configuration.Get<AppSettings>();
-                if (config.isServer) {
+                if (config.TryGetValue("isServer", out object isServer) && (bool)isServer) {
                     var matchInfo = new MatchInfo(msgStr);
                     if (playerCount != matchInfo.PlayerCount) {
                         playerCount = matchInfo.PlayerCount;
 
-                        AddMessage("Updating tracker at " + config.trackerBaseUrl + " with player count of " + matchInfo.PlayerCount + ".");
+                        AddMessage("Updating tracker at " + config["trackerBaseUrl"] + " with player count of " + matchInfo.PlayerCount + ".");
 
-                        http.PostAsync(config.trackerBaseUrl + "/api", new StringContent(JsonConvert.SerializeObject(new {
-                            numPlayers = matchInfo.PlayerCount
+                        http.PostAsync(config["trackerBaseUrl"] + "/api", new StringContent(MiniJson.ToString(new MJDict {
+                            { "numPlayers", matchInfo.PlayerCount }
                         }), Encoding.UTF8, "application/json"));
                     }
                 }
@@ -328,19 +329,18 @@ namespace olproxy
                     "Received " + (msg.IsRequest ? msg.HasPrivateMatchData ? "create " : "join " : "") + "match " + ticketType +
                     (msg.HasPrivateMatchData || msg.ticketType == "match" ? " (" + matchInfo + ")" : ""));
 
-                var config = Configuration.Get<AppSettings>();
-                if (config.isServer && matchInfo != null)
+                if (config.TryGetValue("isServer", out object isServer) && (bool)isServer && matchInfo != null)
                 {
-                    AddMessage("Updating tracker at " + config.trackerBaseUrl + " with the match information.");
+                    AddMessage("Updating tracker at " + config["trackerBaseUrl"] + " with the match information.");
 
-                    http.PostAsync(config.trackerBaseUrl + "/api", new StringContent(JsonConvert.SerializeObject(new {
-                        name = config.serverName,
-                        notes = config.notes,
-                        numPlayers = matchInfo.PlayerCount,
-                        maxNumPlayers = matchInfo.PrivateMatchData.MaxPlayers,
-                        map = matchInfo.PrivateMatchData.LevelName,
-                        mode = matchInfo.PrivateMatchData.GameMode,
-                        gameStarted = DateTime.UtcNow
+                    http.PostAsync(config["trackerBaseUrl"] + "/api", new StringContent(MiniJson.ToString(new MJDict {
+                        {"name", config["serverName"] },
+                        {"notes", config["notes"] },
+                        {"numPlayers", matchInfo.PlayerCount },
+                        {"maxNumPlayers", matchInfo.PrivateMatchData.MaxPlayers },
+                        {"map", matchInfo.PrivateMatchData.LevelName },
+                        {"mode", matchInfo.PrivateMatchData.GameMode },
+                        {"gameStarted", DateTime.UtcNow.ToString("o") }
                     }), Encoding.UTF8, "application/json"));
                 }
             }
@@ -381,19 +381,31 @@ namespace olproxy
             }
         }
 
+        void LoadConfig()
+        {
+            string configFile = "appsettings.json";
+            try
+            {
+                config = MiniJson.Parse(File.ReadAllText(configFile)) as MJDict;
+            }
+            catch (FileNotFoundException)
+            {
+                config = new MJDict();
+            }
+        }
+
         void Run(string[] args)
         {
             foreach (var arg in args)
                 if (arg == "-v")
                     debug = true;
+            LoadConfig();
             Init();
             MainLoop();
         }
 
         static void Main(string[] args)
         {
-            Configuration = new ConfigurationBuilder().SetBasePath(Directory.GetCurrentDirectory()).AddJsonFile("appsettings.json", optional: true, reloadOnChange: false).Build();
-            
             new Program().Run(args);
         }
     }

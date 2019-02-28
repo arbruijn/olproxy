@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFrameworks>netcoreapp2.2</TargetFrameworks>
+    <TargetFrameworks>net45;netcoreapp2.2</TargetFrameworks>
     <Version>0.1.1</Version>
     <PackageProjectUrl>https://github.com/arbruijn/olproxy</PackageProjectUrl>
   </PropertyGroup>
@@ -20,9 +20,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="2.2.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="2.2.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="2.2.0" />
+    <Reference Include="System.Net.Http" />
   </ItemGroup>
 
   <ItemGroup>
