@@ -249,9 +249,6 @@ namespace olproxy
                 if (config.isServer) {
                     AddMessage("Updating tracker at " + config.trackerBaseUrl + " with player count of " + matchInfo.PlayerCount + ".");
 
-                    Console.WriteLine(JsonConvert.SerializeObject(new {
-                        numPlayers = matchInfo.PlayerCount
-                    }));
                     http.PostAsync(config.trackerBaseUrl + "/api", new StringContent(JsonConvert.SerializeObject(new {
                         numPlayers = matchInfo.PlayerCount
                     }), Encoding.UTF8, "application/json"));
