@@ -80,7 +80,7 @@ namespace olproxy
             get 
             {
                 if (StockLevelNum >= 0)
-                    return StockLevels[StockLevelNum];
+                    return StockLevelNum < StockLevels.Length ? StockLevels[StockLevelNum] : "Level " + StockLevelNum;
                 return CustomLevel.Substring(0, CustomLevel.LastIndexOf('.'));
             }
         }
