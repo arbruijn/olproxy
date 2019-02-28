@@ -85,6 +85,14 @@ namespace olproxy
             }
         }
 
+        public string GameMode
+        {
+            get
+            {
+                return MatchModes[Mode];
+            }
+        }
+
         public PrivateMatchData(byte[] buf)
         {
             var br = new BitReader(buf);

@@ -1,9 +1,10 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -11,7 +12,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using minijson;
+using Microsoft.Extensions.Configuration;
+using Newtonsoft.Json;
 
 /*
 example message exachange:
@@ -50,6 +52,8 @@ namespace olproxy
         private DateTime curLocalIPLast;
         private bool debug;
         private ConsoleSpinner spinner = new ConsoleSpinner();
+        static private IConfigurationRoot Configuration;
+        private HttpClient http = new HttpClient();
 
 #if NETCORE
         [DllImport("libc", SetLastError = true)]
@@ -149,6 +153,7 @@ namespace olproxy
         class ParsedMessage
         {
             public bool IsRequest; // client -> server
+            public bool IsMatch; // server -> client
             public string Password;
             public string ticketType;
             public string ticket;
@@ -182,6 +187,7 @@ namespace olproxy
             string msgName = msgNameRegex.Match(message)?.Groups[1].Value;
             var ret = new ParsedMessage();
             ret.IsRequest = msgName == "MMRequest";
+            ret.IsMatch = msgName == "MMMatch";
             ret.ticketType = msgTicketTypeRegex.Match(message)?.Groups[1].Value;
             if (ret.IsRequest)
                 ret.Password = msgPasswordRegex.Match(message)?.Groups[1].Value;
@@ -221,8 +227,7 @@ namespace olproxy
                 return;
 
             var msg = ParseMessage(msgStr);
-            if (msg.IsRequest)
-            {
+            if (msg.IsRequest) {
                 var adr = FindPasswordAddress(msg.Password, out string hostname);
                 if (adr == null)
                     return;
@@ -238,6 +243,19 @@ namespace olproxy
                     spinner.Spin();
                 bcast.Send(msgStr, remoteSocket.Client, destEndPoint, pktPid, isNew);
                 return;
+            } else if (msg.IsMatch) {
+                var matchInfo = new MatchInfo(msgStr);
+                var config = Configuration.Get<AppSettings>();
+                if (config.isServer) {
+                    AddMessage("Updating tracker at " + config.trackerBaseUrl + " with player count of " + matchInfo.PlayerCount + ".");
+
+                    Console.WriteLine(JsonConvert.SerializeObject(new {
+                        numPlayers = matchInfo.PlayerCount
+                    }));
+                    http.PostAsync(config.trackerBaseUrl + "/api", new StringContent(JsonConvert.SerializeObject(new {
+                        numPlayers = matchInfo.PlayerCount
+                    }), Encoding.UTF8, "application/json"));
+                }
             }
 
             if (!remotePeers.Any())
@@ -294,12 +312,28 @@ namespace olproxy
 
             if (isNew)
             {
+                var matchInfo = new MatchInfo(message);
+
                 var msg = ParseMessage(message);
                 string ticketType = message == "" ? "done" : msg.ticketType;
                 AddMessage(debug ? peer.lastNewSeq + " Received match " + ticketType + " " + msg.ticket +
                     ", forward to " + String.Join(", ", BroadcastEndpoints.Select(x => x.ToString())) + " pid " + pid :
                     "Received " + (msg.IsRequest ? msg.HasPrivateMatchData ? "create " : "join " : "") + "match " + ticketType +
-                    (msg.HasPrivateMatchData || msg.ticketType == "match" ? " (" + new MatchInfo(message) + ")" : ""));
+                    (msg.HasPrivateMatchData || msg.ticketType == "match" ? " (" + matchInfo + ")" : ""));
+
+                var config = Configuration.Get<AppSettings>();
+                if (config.isServer)
+                {
+                    AddMessage("Updating tracker at " + config.trackerBaseUrl + " with the match information.");
+
+                    http.PostAsync(config.trackerBaseUrl + "/api", new StringContent(JsonConvert.SerializeObject(new
+                    {
+                        numPlayers = matchInfo.PlayerCount,
+                        maxNumPlayers = matchInfo.PrivateMatchData.MaxPlayers,
+                        map = matchInfo.PrivateMatchData.LevelName,
+                        mode = matchInfo.PrivateMatchData.GameMode
+                    }), Encoding.UTF8, "application/json"));
+                }
             }
             else
                 spinner.Spin();
@@ -349,6 +383,8 @@ namespace olproxy
 
         static void Main(string[] args)
         {
+            Configuration = new ConfigurationBuilder().SetBasePath(Directory.GetCurrentDirectory()).AddJsonFile("appsettings.json", optional: true, reloadOnChange: false).Build();
+            
             new Program().Run(args);
         }
     }

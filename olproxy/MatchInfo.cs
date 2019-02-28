@@ -12,8 +12,10 @@ namespace olproxy
         private string Creator;
         private string Level;
         private bool IsTeams;
-        private int PlayerCount;
         private bool HasMatchData;
+
+        public PrivateMatchData PrivateMatchData { get; }
+        public int PlayerCount { get; }
 
         public override string ToString()
         {
@@ -31,11 +33,11 @@ namespace olproxy
             foreach (var pl in players)
                 if (((pl as MJDict)["PlayerAttributes"] as MJDict).TryGetValue("private_match_data", out object data))
                 {
-                    var privateMatchData = new PrivateMatchData(System.Convert.FromBase64String((data as MJDict)["valueAttribute"] as string));
+                    PrivateMatchData = new PrivateMatchData(System.Convert.FromBase64String((data as MJDict)["valueAttribute"] as string));
                     HasMatchData = true;
-                    Creator = privateMatchData.Creator;
-                    Level = privateMatchData.LevelName;
-                    IsTeams = privateMatchData.Mode == 1;
+                    Creator = PrivateMatchData.Creator;
+                    Level = PrivateMatchData.LevelName;
+                    IsTeams = PrivateMatchData.Mode == 1;
                 }
         }
     }
