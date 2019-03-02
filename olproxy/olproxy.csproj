@@ -3,7 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFrameworks>net45;netcoreapp2.2</TargetFrameworks>
-    <Version>0.1.1</Version>
+    <Version>0.1.9</Version>
     <PackageProjectUrl>https://github.com/arbruijn/olproxy</PackageProjectUrl>
   </PropertyGroup>
 
