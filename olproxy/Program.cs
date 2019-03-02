@@ -256,7 +256,12 @@ namespace olproxy
 
                         http.PostAsync(config["trackerBaseUrl"] + "/api", new StringContent(MiniJson.ToString(new MJDict {
                             { "numPlayers", matchInfo.PlayerCount }
-                        }), Encoding.UTF8, "application/json"));
+                        }), Encoding.UTF8, "application/json")).ContinueWith(c => {
+                            if (c.Exception != null)
+                            {
+                                AddMessage("Warning: Exception occurred while attempting to communicate with the tracker: " + c.Exception.ToString());
+                            }
+                        }, TaskContinuationOptions.OnlyOnFaulted);
                     }
                 }
             }
@@ -341,7 +346,12 @@ namespace olproxy
                         {"map", matchInfo.PrivateMatchData.LevelName },
                         {"mode", matchInfo.PrivateMatchData.GameMode },
                         {"gameStarted", DateTime.UtcNow.ToString("o") }
-                    }), Encoding.UTF8, "application/json"));
+                    }), Encoding.UTF8, "application/json")).ContinueWith(c => {
+                        if (c.Exception != null)
+                        {
+                            AddMessage("Warning: Exception occurred while attempting to communicate with the tracker: " + c.Exception.ToString());
+                        }
+                    }, TaskContinuationOptions.OnlyOnFaulted);
                 }
             }
             else
