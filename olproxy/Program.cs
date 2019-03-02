@@ -246,7 +246,7 @@ namespace olproxy
                     spinner.Spin();
                 bcast.Send(msgStr, remoteSocket.Client, destEndPoint, pktPid, isNew);
                 return;
-            } else if (msg.IsMatch) {
+            } else if (msg.IsMatch && isNew) {
                 if (config.TryGetValue("isServer", out object isServer) && (bool)isServer) {
                     var matchInfo = new MatchInfo(msgStr);
                     if (playerCount != matchInfo.PlayerCount) {
@@ -332,9 +332,9 @@ namespace olproxy
                 AddMessage(debug ? peer.lastNewSeq + " Received match " + ticketType + " " + msg.ticket +
                     ", forward to " + String.Join(", ", BroadcastEndpoints.Select(x => x.ToString())) + " pid " + pid :
                     "Received " + (msg.IsRequest ? msg.HasPrivateMatchData ? "create " : "join " : "") + "match " + ticketType +
-                    (msg.HasPrivateMatchData || msg.ticketType == "match" ? " (" + matchInfo + ")" : ""));
+                    (matchInfo != null ? " (" + matchInfo + ")" : ""));
 
-                if (config.TryGetValue("isServer", out object isServer) && (bool)isServer && matchInfo != null)
+                if (msg.IsRequest && config.TryGetValue("isServer", out object isServer) && (bool)isServer && matchInfo != null)
                 {
                     AddMessage("Updating tracker at " + config["trackerBaseUrl"] + " with the match information.");
 
