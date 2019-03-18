@@ -109,8 +109,12 @@ namespace olproxy
 
         void InitSockets()
         {
-            remoteSocket = new UdpClient();
-            remoteSocket.Client.Bind(new IPEndPoint(IPAddress.Any, remotePort));
+            try {
+                remoteSocket = new UdpClient();
+                remoteSocket.Client.Bind(new IPEndPoint(IPAddress.Any, remotePort));
+            } catch (SocketException ex) {
+                throw new Exception("Cannot open UDP port " + remotePort + ". Is olprxoy already running? (error " + ex.ErrorCode + ")");
+            }
 
             localSocket = CreateUDPBroadcastSocket();
             localSocket.Client.Bind(new IPEndPoint(IPAddress.Any, broadcastPort));
