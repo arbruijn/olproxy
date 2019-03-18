@@ -126,6 +126,37 @@ namespace olproxy
             remotePeers = new Dictionary<IPEndPoint, DateTime>();
             curLocalIP = null;
             curLocalIPLast = DateTime.MinValue;
+
+            AppDomain.CurrentDomain.ProcessExit += async (object sender, EventArgs e) => {
+                if (config.TryGetValue("isServer", out object isServer) && (bool)isServer && config.TryGetValue("signOff", out object signOff) && (bool)signOff) {
+                    AddMessage("Signing off tracker at " + config["trackerBaseUrl"]);
+
+                    await http.PostAsync(config["trackerBaseUrl"] + "/api?online=false", new StringContent("{}", Encoding.UTF8, "application/json")).ContinueWith(c => {
+                        if (c.Exception != null) {
+                            AddMessage("Warning: Exception occurred while attempting to communicate with the tracker: " + c.Exception.ToString());
+                        }
+                    }, TaskContinuationOptions.OnlyOnFaulted);
+                }
+            };
+
+            {
+                if (config.TryGetValue("isServer", out object isServer) && (bool)isServer && config.TryGetValue("signOff", out object signOff) && (bool)signOff) {
+                    AddMessage("Signing on tracker at " + config["trackerBaseUrl"]);
+
+                    http.PostAsync(config["trackerBaseUrl"] + "/api", new StringContent(MiniJson.ToString(new MJDict {
+                        {"name", config["serverName"] },
+                        {"notes", config["notes"] },
+                        {"numPlayers", 0 },
+                        {"maxNumPlayers", 0 },
+                        {"map", "" },
+                        {"mode", "" }
+                    }), Encoding.UTF8, "application/json")).ContinueWith(c => {
+                        if (c.Exception != null) {
+                            AddMessage("Warning: Exception occurred while attempting to communicate with the tracker: " + c.Exception.ToString());
+                        }
+                    }, TaskContinuationOptions.OnlyOnFaulted);
+                }
+            }
         }
 
         UdpClient CreateUDPBroadcastSocket()
