@@ -172,7 +172,7 @@ namespace olproxy
                     "\\\\\"password\\\\\":\\{\\\\\"attributeType\\\\\":\\\\\"STRING_LIST\\\\\",\\\\\"valueAttribute\\\\\":\\[\\\\\"([^\"]+)\\\\\"\\]}"
                     );
         
-        private static IPAddress FindPasswordAddress(string password, out string name)
+        private IPAddress FindPasswordAddress(string password, out string name)
         {
             var i = password.IndexOf('_'); // allow password suffix with '_'
             name = i == -1 ? password : password.Substring(0, i);
@@ -181,8 +181,14 @@ namespace olproxy
             if (new Regex(@"\d{1,3}([.]\d{1,3}){3}").IsMatch(name) &&
                 IPAddress.TryParse(name, out IPAddress adr))
                 return adr;
-            var adrs = Dns.GetHostAddresses(name);
-            return adrs == null || adrs.Length == 0 ? null : adrs[0];
+            try {
+                var adrs = Dns.GetHostAddresses(name);
+                return adrs == null || adrs.Length == 0 ? null : adrs[0];
+            } catch (SocketException ex) {
+                AddMessage("Cannot find " + name + ": " + ex.Message);
+            } catch (Exception) {
+            }
+            return null;
         }
 
         private static ParsedMessage ParseMessage(string message)
