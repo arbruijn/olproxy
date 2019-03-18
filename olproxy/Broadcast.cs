@@ -18,7 +18,7 @@ namespace olproxy
         public int fakePid;
         public int lastNewSeq;
         public uint lastHash;
-        public PeerInfoType peerInfo;
+        //public PeerInfoType peerInfo;
     }
 
     class BroadcastPeerId
