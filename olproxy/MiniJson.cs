@@ -145,7 +145,7 @@ namespace minijson
                         }
                         i--;
                         pos = i;
-                        return double.Parse(data.Substring(j, i - j));
+                        return double.Parse(data.Substring(j, i - j), CultureInfo.InvariantCulture);
                     }
                     if (c == 't' && i + 3 <= l && data[i] == 'r' && data[i + 1] == 'u' && data[i + 2] == 'e')
                     {
