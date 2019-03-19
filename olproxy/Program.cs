@@ -7,6 +7,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -415,7 +416,10 @@ namespace olproxy
 
         void MainLoop()
         {
-            AddMessage("Ready. Create/Join LAN Match in Overload and use server IP address as password (or start Overload server)");
+            AddMessage("olproxy " + Assembly.GetExecutingAssembly().GetName().Version.ToString(3) + " Ready.");
+            AddMessage("Create/Join LAN Match in Overload and use server IP address as password");
+            AddMessage("(or start Overload server)");
+
             var taskLocal = localSocket.ReceiveAsync();
             var taskRemote = remoteSocket.ReceiveAsync();
             var tasks = new Task[2];
