@@ -145,7 +145,7 @@ namespace minijson
                         }
                         i--;
                         pos = i;
-                        return double.Parse(data.Substring(j, i - j));
+                        return double.Parse(data.Substring(j, i - j), CultureInfo.InvariantCulture);
                     }
                     if (c == 't' && i + 3 <= l && data[i] == 'r' && data[i + 1] == 'u' && data[i + 2] == 'e')
                     {
@@ -181,27 +181,39 @@ namespace minijson
             return val == null ? "null" : val is Boolean b ? b ? "true" : "false" : val.ToString();
         }
     }
-}
 /*
-foreach (var test in new [] {
-    "\"test\"",
-    "\"test\\\"test\"",
-    "\"test\\\\\"",
-    "\"test\\\\\\\"test\"",
-    "\"[\\/\\b\\n\\r\\t\\u20ac]\"",
-    "123",
-    "1.1",
-    "1.1e1",
-    "1.1e+1",
-    "1.1e-1",
-    "1e1",
-    "1E1",
-    "[]",
-    "[1]",
-    "[1,2]",
-    "[true,false,null]",
-    "{}",
-    "{\"a\":\"b\"}",
-    "{\"a\":\"b\",\"c\":\"d\"}"})
-    Debug.WriteLine(test + " -> " + MiniJson.Parse(test) + " -> " + MiniJson.ToString(MiniJson.Parse(test)));
+public class MiniJsonTest
+{
+    public static void Run()
+    {
+        foreach (var test in new [] {
+            "\"test\"",
+            "\"test\\\"test\"",
+            "\"test\\\\\"",
+            "\"test\\\\\\\"test\"",
+            "\"[\\/\\b\\n\\r\\t\\u20ac]\"",
+            "123",
+            "1.1",
+            "1.1e1",
+            "1.1e+1",
+            "1.1e-1",
+            "1e1",
+            "1E1",
+            "[]",
+            "[1]",
+            "[1,2]",
+            "[1,2,1.0,1e1]",
+            "[true,false,null]",
+            "{}",
+            "{\"a\":\"b\"}",
+            "{\"a\":\"b\",\"c\":\"d\"}",
+            "{\"a\":1}",
+            "{\"a\":1.1}",
+            "{\"a\":1.0e1}",
+            "{\"a\":1,\"b\":1.1,\"c\":1.0e1}",
+            "{\"a\":1,\"b\":-1}"})
+            Debug.WriteLine(test + " -> " + MiniJson.Parse(test) + " -> " + MiniJson.ToString(MiniJson.Parse(test)));
+    }
+}
 */
+}

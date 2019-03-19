@@ -109,8 +109,12 @@ namespace olproxy
 
         void InitSockets()
         {
-            remoteSocket = new UdpClient();
-            remoteSocket.Client.Bind(new IPEndPoint(IPAddress.Any, remotePort));
+            try {
+                remoteSocket = new UdpClient();
+                remoteSocket.Client.Bind(new IPEndPoint(IPAddress.Any, remotePort));
+            } catch (SocketException ex) {
+                throw new Exception("Cannot open UDP port " + remotePort + ". Is olprxoy already running? (error " + ex.ErrorCode + ")");
+            }
 
             localSocket = CreateUDPBroadcastSocket();
             localSocket.Client.Bind(new IPEndPoint(IPAddress.Any, broadcastPort));
@@ -203,7 +207,7 @@ namespace olproxy
                     "\\\\\"password\\\\\":\\{\\\\\"attributeType\\\\\":\\\\\"STRING_LIST\\\\\",\\\\\"valueAttribute\\\\\":\\[\\\\\"([^\"]+)\\\\\"\\]}"
                     );
         
-        private static IPAddress FindPasswordAddress(string password, out string name)
+        private IPAddress FindPasswordAddress(string password, out string name)
         {
             var i = password.IndexOf('_'); // allow password suffix with '_'
             name = i == -1 ? password : password.Substring(0, i);
@@ -212,8 +216,14 @@ namespace olproxy
             if (new Regex(@"\d{1,3}([.]\d{1,3}){3}").IsMatch(name) &&
                 IPAddress.TryParse(name, out IPAddress adr))
                 return adr;
-            var adrs = Dns.GetHostAddresses(name);
-            return adrs == null || adrs.Length == 0 ? null : adrs[0];
+            try {
+                var adrs = Dns.GetHostAddresses(name);
+                return adrs == null || adrs.Length == 0 ? null : adrs[0];
+            } catch (SocketException ex) {
+                AddMessage("Cannot find " + name + ": " + ex.Message);
+            } catch (Exception) {
+            }
+            return null;
         }
 
         private static ParsedMessage ParseMessage(string message)
