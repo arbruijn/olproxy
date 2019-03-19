@@ -85,6 +85,18 @@ namespace olproxy
                 var ipProps = intf.GetIPProperties();
                 if (intf.OperationalStatus != OperationalStatus.Up || ipProps == null)
                     continue;
+                #if !NETCORE
+                if (ipProps.DnsAddresses.Where(x => x.AddressFamily == AddressFamily.InterNetwork).Count() > 2)
+                {
+                    AddMessage("Warning! Interface " + String.Join(", ", ipProps.UnicastAddresses
+                        .Where(x => x.Address.AddressFamily == AddressFamily.InterNetwork)
+                        .Select(x => x.Address)) + " has more than 2 DNS servers.");
+                    AddMessage("This will crash Overload LAN Mode!");
+                    AddMessage("Remove one or more DNS servers from your DNS settings.");
+                    AddMessage("See for example http://lifewire.com/dns-2626242");
+                    AddMessage("");
+                }
+                #endif
                 bool loopback = intf.NetworkInterfaceType == NetworkInterfaceType.Loopback;
                 foreach (UnicastIPAddressInformation addr in ipProps.UnicastAddresses)
                 {
