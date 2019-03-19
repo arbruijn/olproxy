@@ -144,7 +144,7 @@ namespace olproxy
             };
 
             {
-                if (config.TryGetValue("isServer", out object isServer) && (bool)isServer && config.TryGetValue("signOff", out object signOff) && (bool)signOff) {
+                if (config.TryGetValue("isServer", out object isServer) && (bool)isServer) {
                     AddMessage("Signing on tracker at " + config["trackerBaseUrl"]);
 
                     http.PostAsync(config["trackerBaseUrl"] + "/api", new StringContent(MiniJson.ToString(new MJDict {
