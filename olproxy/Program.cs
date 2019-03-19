@@ -75,6 +75,16 @@ namespace olproxy
             Debug.WriteLine(s);
         }
 
+        Task TrackerPost(string queryString, MJDict body)
+        {
+            return http.PostAsync(config["trackerBaseUrl"] + "/api" + queryString,
+                new StringContent(MiniJson.ToString(body), Encoding.UTF8, "application/json")
+            ).ContinueWith(c => {
+                if (c.Exception != null)
+                    AddMessage("Warning: Exception occurred while attempting to communicate with the tracker: " + c.Exception.ToString());
+            }, TaskContinuationOptions.OnlyOnFaulted);
+        }
+
         void InitInterfaces()
         {
             LocalIPSet = new HashSet<IPAddress>();
@@ -148,11 +158,7 @@ namespace olproxy
                 if (config.TryGetValue("isServer", out object isServer) && (bool)isServer && config.TryGetValue("signOff", out object signOff) && (bool)signOff) {
                     AddMessage("Signing off tracker at " + config["trackerBaseUrl"]);
 
-                    await http.PostAsync(config["trackerBaseUrl"] + "/api?online=false", new StringContent("{}", Encoding.UTF8, "application/json")).ContinueWith(c => {
-                        if (c.Exception != null) {
-                            AddMessage("Warning: Exception occurred while attempting to communicate with the tracker: " + c.Exception.ToString());
-                        }
-                    }, TaskContinuationOptions.OnlyOnFaulted);
+                    await TrackerPost("?online=false", new MJDict {});
                 }
             };
 
@@ -160,18 +166,14 @@ namespace olproxy
                 if (config.TryGetValue("isServer", out object isServer) && (bool)isServer) {
                     AddMessage("Signing on tracker at " + config["trackerBaseUrl"]);
 
-                    http.PostAsync(config["trackerBaseUrl"] + "/api", new StringContent(MiniJson.ToString(new MJDict {
+                    TrackerPost("", new MJDict {
                         {"name", config["serverName"] },
                         {"notes", config["notes"] },
                         {"numPlayers", 0 },
                         {"maxNumPlayers", 0 },
                         {"map", "" },
                         {"mode", "" }
-                    }), Encoding.UTF8, "application/json")).ContinueWith(c => {
-                        if (c.Exception != null) {
-                            AddMessage("Warning: Exception occurred while attempting to communicate with the tracker: " + c.Exception.ToString());
-                        }
-                    }, TaskContinuationOptions.OnlyOnFaulted);
+                    });
                 }
             }
         }
@@ -308,14 +310,9 @@ namespace olproxy
 
                         AddMessage("Updating tracker at " + config["trackerBaseUrl"] + " with player count of " + matchInfo.PlayerCount + ".");
 
-                        http.PostAsync(config["trackerBaseUrl"] + "/api", new StringContent(MiniJson.ToString(new MJDict {
+                        TrackerPost("", new MJDict {
                             { "numPlayers", matchInfo.PlayerCount }
-                        }), Encoding.UTF8, "application/json")).ContinueWith(c => {
-                            if (c.Exception != null)
-                            {
-                                AddMessage("Warning: Exception occurred while attempting to communicate with the tracker: " + c.Exception.ToString());
-                            }
-                        }, TaskContinuationOptions.OnlyOnFaulted);
+                        });
                     }
                 }
             }
@@ -392,7 +389,7 @@ namespace olproxy
                 {
                     AddMessage("Updating tracker at " + config["trackerBaseUrl"] + " with the match information.");
 
-                    http.PostAsync(config["trackerBaseUrl"] + "/api", new StringContent(MiniJson.ToString(new MJDict {
+                    TrackerPost("", new MJDict {
                         {"name", config["serverName"] },
                         {"notes", config["notes"] },
                         {"numPlayers", matchInfo.PlayerCount },
@@ -400,12 +397,7 @@ namespace olproxy
                         {"map", matchInfo.PrivateMatchData.LevelName },
                         {"mode", matchInfo.PrivateMatchData.GameMode },
                         {"gameStarted", DateTime.UtcNow.ToString("o") }
-                    }), Encoding.UTF8, "application/json")).ContinueWith(c => {
-                        if (c.Exception != null)
-                        {
-                            AddMessage("Warning: Exception occurred while attempting to communicate with the tracker: " + c.Exception.ToString());
-                        }
-                    }, TaskContinuationOptions.OnlyOnFaulted);
+                    });
                 }
             }
             else
