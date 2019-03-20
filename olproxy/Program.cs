@@ -143,6 +143,16 @@ namespace olproxy
             localSocket.Client.Bind(new IPEndPoint(IPAddress.Any, broadcastPort));
         }
 
+        async Task Done()
+        {
+            if (config.TryGetValue("isServer", out object isServer) && (bool)isServer && config.TryGetValue("signOff", out object signOff) && (bool)signOff)
+            {
+                AddMessage("Signing off tracker at " + config["trackerBaseUrl"]);
+
+                await TrackerPost("?online=false", new MJDict { });
+            }
+        }
+
         void Init()
         {
             InitInterfaces();
@@ -154,13 +164,8 @@ namespace olproxy
             curLocalIP = null;
             curLocalIPLast = DateTime.MinValue;
 
-            AppDomain.CurrentDomain.ProcessExit += async (object sender, EventArgs e) => {
-                if (config.TryGetValue("isServer", out object isServer) && (bool)isServer && config.TryGetValue("signOff", out object signOff) && (bool)signOff) {
-                    AddMessage("Signing off tracker at " + config["trackerBaseUrl"]);
-
-                    await TrackerPost("?online=false", new MJDict {});
-                }
-            };
+            AppDomain.CurrentDomain.ProcessExit += async (object sender, EventArgs e) => { await Done(); };
+            Console.CancelKeyPress += async (object sender, ConsoleCancelEventArgs e) => { await Done(); };
 
             {
                 if (config.TryGetValue("isServer", out object isServer) && (bool)isServer) {
