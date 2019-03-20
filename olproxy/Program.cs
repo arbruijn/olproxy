@@ -166,7 +166,7 @@ namespace olproxy
                 if (config.TryGetValue("isServer", out object isServer) && (bool)isServer) {
                     AddMessage("Signing on tracker at " + config["trackerBaseUrl"]);
 
-                    TrackerPost("", new MJDict {
+                    TrackerPost("?online=true", new MJDict {
                         {"name", config["serverName"] },
                         {"notes", config["notes"] },
                         {"numPlayers", 0 },
