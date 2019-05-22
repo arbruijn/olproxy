@@ -74,6 +74,7 @@ namespace olproxy
         public int LoadoutMissile2;
         public int CustomModifier1;
         public int CustomModifier2;
+        public bool JIPEnabled;
 
         public string LevelName
         {
@@ -89,7 +90,7 @@ namespace olproxy
         {
             get
             {
-                return MatchModes[Mode];
+                return Mode < MatchModes.Length ? MatchModes[Mode] : "Mode " + Mode;
             }
         }
 
@@ -97,9 +98,19 @@ namespace olproxy
         {
             var br = new BitReader(buf);
             Creator = br.ReadString().ToUpper();
+            var i = Creator.IndexOf('\0'); // olmod extension
+            if (i >= 0)
+            {
+                JIPEnabled = i + 1 < Creator.Length && (Creator[i + 1] & 8) != 0;
+                Creator = Creator.Substring(0, i);
+            }
+            else
+                JIPEnabled = false;
             Mode = br.Read(3);
             MinPlayers = br.Read(4);
             MaxPlayers = br.Read(4);
+            if (MaxPlayers == 0) // olmod extension
+                MaxPlayers = 16;
             if (br.Read(1) == 0)
             {
                 CustomLevel = br.ReadString();
