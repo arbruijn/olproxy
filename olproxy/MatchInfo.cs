@@ -19,7 +19,9 @@ namespace olproxy
 
         public override string ToString()
         {
-            return (HasMatchData ? (IsTeams ? "Teams, " : "") + Level + ", by " + Creator + ", " : "") + PlayerCount + " players";
+            return (HasMatchData ? (IsTeams ? "Teams, " : "") + Level + ", by " + Creator + ", " : "") + PlayerCount +
+                (HasMatchData ? "/" + PrivateMatchData.MaxPlayers : "") +
+                " players";
         }
 
         public MatchInfo(string matchMessage)
