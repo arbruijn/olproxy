@@ -10,7 +10,7 @@ namespace olproxy
     {
         private static readonly string[] StockLevels = new[] { "Wraith", "Vault",  "Terminal", "Blizzard", "Backfire", "Centrifuge",
             "Labyrinth", "Hive", "Syrinx", "Foundry", "Roundabout" };
-        private static readonly string[] MatchModes = new[] { "Anarchy", "Team Anarchy", "Monsterball" };
+        private static readonly string[] MatchModes = new[] { "Anarchy", "Team Anarchy", "Monsterball", "CTF" };
         private static readonly int[] TimeLimits = new[] { 0, 3, 5, 7, 10, 15, 20 };
 
         private class BitReader
