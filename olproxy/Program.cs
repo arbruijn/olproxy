@@ -286,10 +286,48 @@ namespace olproxy
             bcast.SendMulti(msgStr, remoteSocket.Client, remotePeers.Keys, pktPid, isNew);
         }
 
+        private void ProcessPingPacket(byte[] packetData, IPEndPoint senderEndPoint)
+        {
+            byte[] outBuf = new byte[packetData.Length];
+            Array.Copy(packetData, outBuf, packetData.Length);
+
+            // calculate incoming hash
+            Array.Copy(BitConverter.GetBytes(0), 0, outBuf, 8, 4);
+            uint srcHash = xxHash.CalculateHash(outBuf);
+
+            if (srcHash != BitConverter.ToUInt32(packetData, 8)) // ignore packet with invalid hash
+                return;
+
+            Array.Copy(BitConverter.GetBytes((int)-2), 0, outBuf, 0, 4);
+            if (outBuf.Length >= 19 + 4)
+                Array.Copy(BitConverter.GetBytes(0), 0, outBuf, 19, 4); // version
+            if (outBuf.Length >= 19 + 4 + 4)
+                Array.Copy(BitConverter.GetBytes(255), 0, outBuf, 19 + 4, 4); // status, 255 = unknown
+
+            // calculate outgoing hash
+            Array.Copy(BitConverter.GetBytes(0), 0, outBuf, 8, 4);
+            uint hash = xxHash.CalculateHash(outBuf);
+            Array.Copy(BitConverter.GetBytes(hash), 0, outBuf, 8, 4);
+
+            remoteSocket.Send(outBuf, outBuf.Length, senderEndPoint);
+        }
+
+        public static bool IsPingPacket(byte[] packetData)
+        {
+            return BitConverter.ToInt32(packetData, 0) == -1;
+        }
+
+
         void ProcessRemotePacket(IPEndPoint endPoint, byte[] packet)
         {
             if (LocalIPSet.Contains(endPoint.Address))
                 return;
+
+            if (IsPingPacket(packet))
+            {
+                ProcessPingPacket(packet, endPoint);
+                return;
+            }
 
             // store peer last seen
             remotePeers[endPoint] = DateTime.UtcNow;
