@@ -20,10 +20,6 @@ This is an unaffiliated, unsupported tool. Use at your own risk.
 -  Make sure UDP ports 7000-8001 are open/forwarded to the server computer. You
    can use a guide on the internet to configure your router, for example https://portforward.com/router.htm
 
--  If you want your server to appear on http://olproxy.otl.gg/, edit
-   `appsettings.json`. Change the value after `isServer` from `false` to `true` and set
-   the `serverName` and `notes` text. Your server will appear after starting the first match.
-
 -  Start olproxy (you should see a console window with the text Ready.)
 
 -  Start the Overload server
